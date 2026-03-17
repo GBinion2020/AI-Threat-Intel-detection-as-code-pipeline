@@ -1,0 +1,15 @@
+Recommend a repository path for a generated detection rule.
+
+Return JSON only with this structure:
+{
+  "recommended_repo_path": "Detections/.../file_name.yml",
+  "reason": "string"
+}
+
+Requirements:
+- The path must be repo-relative.
+- The path must always stay under `Detections/`.
+- Prefer an existing folder when it fits the user's guidance.
+- Use matching detections as a clue when the user wants similar placement.
+- Keep the file name short, descriptive, and YAML-safe.
+- Do not include markdown fences or commentary outside the JSON object.

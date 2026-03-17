@@ -21,7 +21,7 @@ from scripts.threat_intel_workflow import (
     create_review_report,
     generate_detection_rule_from_report,
     normalize_and_validate_generated_rule,
-    suggest_detection_output_path,
+    recommend_detection_output_path,
     write_detection_rule,
 )
 
@@ -112,15 +112,6 @@ def prompt_existing_file_path(prompt):
         if os.path.isfile(expanded_path):
             return expanded_path
         print(f"File not found: {expanded_path}")
-
-
-def prompt_output_path(prompt):
-    while True:
-        file_path = input(prompt).strip()
-        if not file_path:
-            print("Please enter a file path.")
-            continue
-        return os.path.abspath(os.path.expanduser(file_path))
 
 
 def prompt_threat_intel_file():
@@ -388,61 +379,45 @@ def run_threat_intel_intake(model):
         print(f"Rule review failed: {exc}")
         return 1
 
-    path_suggestion = suggest_detection_output_path(
-        scan_result=scan_result,
-        system_name=system_name,
-        language=language,
+    placement_guidance = prompt_non_empty(
+        "Explain where you want this detection rule to go: "
     )
-    suggested_output_path = str(path_suggestion["output_path"])
-    print(f"Suggested output path: {suggested_output_path}")
-    if path_suggestion["requires_new_folder"]:
-        print("This would create a new detection folder.")
-    if not path_suggestion["file_exists"]:
-        print("This would create a new detection file.")
-    else:
-        print("This would overwrite an existing detection file.")
+    while True:
+        try:
+            path_suggestion = recommend_detection_output_path(
+                scan_result=scan_result,
+                source_name=source_name,
+                system_name=system_name,
+                language=language,
+                user_guidance=placement_guidance,
+                model=model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Path recommendation failed: {exc}")
+            return 1
 
-    use_suggested_path = prompt_choice(
-        "Do you want to save the rule to this path? (yes/no): ",
-        {"yes", "no"},
-    )
-    if use_suggested_path == "yes":
-        output_path = suggested_output_path
-    else:
-        output_path = prompt_output_path("Enter the detection output path: ")
-        parent_dir = os.path.dirname(output_path)
-        if parent_dir and not os.path.exists(parent_dir):
-            create_folder = prompt_choice(
-                "That folder does not exist. Create it? (yes/no): ",
-                {"yes", "no"},
-            )
-            if create_folder != "yes":
-                print("Stopping without writing a detection rule.")
-                return 0
-        if not os.path.exists(output_path):
-            create_file = prompt_choice(
-                "That file does not exist yet. Create it? (yes/no): ",
-                {"yes", "no"},
-            )
-            if create_file != "yes":
-                print("Stopping without writing a detection rule.")
-                return 0
+        suggested_output_path = str(path_suggestion["output_path"])
+        print(f"Recommended output path: {suggested_output_path}")
+        if path_suggestion["reason"]:
+            print(f"Reason: {path_suggestion['reason']}")
+        if path_suggestion["requires_new_folder"]:
+            print("This will create a new detection folder.")
+        if path_suggestion["file_exists"]:
+            print("This will overwrite an existing detection file.")
         else:
-            overwrite_file = prompt_choice(
-                "That file already exists. Overwrite it? (yes/no): ",
-                {"yes", "no"},
-            )
-            if overwrite_file != "yes":
-                print("Stopping without writing a detection rule.")
-                return 0
+            print("This will create a new detection file.")
 
-    confirm_post = prompt_choice(
-        "Do you want to post this detection rule to the detection folder now? (yes/no): ",
-        {"yes", "no"},
-    )
-    if confirm_post != "yes":
-        print("Stopping without writing a detection rule.")
-        return 0
+        confirm_path = prompt_choice(
+            "Do you want to use this path? (yes/no): ",
+            {"yes", "no"},
+        )
+        if confirm_path == "yes":
+            output_path = suggested_output_path
+            break
+
+        placement_guidance = prompt_non_empty(
+            "Explain how you want the path adjusted: "
+        )
 
     saved_path = write_detection_rule(output_path, reviewed_rule_text)
     print(f"Detection rule saved to: {saved_path}")

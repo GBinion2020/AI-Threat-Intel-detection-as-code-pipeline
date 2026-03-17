@@ -41,6 +41,7 @@ WORKFLOW_POLICY_PATH = KNOWLEDGE_BASE_POLICIES_DIR / "ThreatIntelWorkflow.yaml"
 PROMPTS_DIR = ROOT_DIR / "prompts"
 INITIAL_SCAN_PROMPT_PATH = PROMPTS_DIR / "threat_intel_initial_scan_prompt.txt"
 RULE_GENERATION_PROMPT_PATH = PROMPTS_DIR / "threat_intel_rule_generation_prompt.txt"
+PATH_RECOMMENDATION_PROMPT_PATH = PROMPTS_DIR / "threat_intel_path_recommendation_prompt.txt"
 DEFAULT_SCHEMA_CHOICE = "1"
 DEFAULT_SCHEMA_LABEL = "Default schema"
 DEFAULT_MINIMUM_CONFIDENCE = "medium"
@@ -79,6 +80,29 @@ def _extract_json_object(text):
         if start == -1 or end == -1 or end <= start:
             raise ValueError("Threat intel scan did not return valid JSON.") from None
         return json.loads(cleaned[start : end + 1])
+
+
+def _request_json_response(*, api_key, model, prompt_text, input_text, timeout=120):
+    payload = {
+        "model": model,
+        "instructions": prompt_text,
+        "input": input_text,
+    }
+    response = requests.post(
+        OPENAI_RESPONSES_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"OpenAI request failed with status {response.status_code}: "
+            f"{response.text.strip() or 'Unknown error'}"
+        )
+    return _extract_json_object(_extract_response_text(response.json()))
 
 
 def _extract_response_text(response_json):
@@ -695,6 +719,75 @@ def suggest_detection_output_path(*, scan_result, system_name, language):
         "output_path": output_path,
         "requires_new_folder": not suggested_dir.exists(),
         "file_exists": output_path.exists(),
+    }
+
+
+def _normalize_detection_repo_path(repo_relative_path):
+    raw_path = str(repo_relative_path).strip().replace("\\", "/")
+    if raw_path.startswith("./"):
+        raw_path = raw_path[2:]
+    if raw_path.startswith("/"):
+        raise ValueError("Recommended path must be repo-relative and start with Detections/.")
+    if not raw_path.startswith("Detections/"):
+        raise ValueError("Recommended path must stay under Detections/.")
+
+    resolved_path = (ROOT_DIR / raw_path).resolve()
+    detections_root = (ROOT_DIR / "Detections").resolve()
+    try:
+        resolved_path.relative_to(detections_root)
+    except ValueError as exc:
+        raise ValueError("Recommended path must stay under Detections/.") from exc
+    return resolved_path
+
+
+def recommend_detection_output_path(
+    *,
+    scan_result,
+    source_name,
+    system_name,
+    language,
+    user_guidance,
+    model=None,
+):
+    knowledge_base = _load_knowledge_base_context()
+    api_key = get_api_key()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY/OPENAI_API is not set")
+
+    fallback = suggest_detection_output_path(
+        scan_result=scan_result,
+        system_name=system_name,
+        language=language,
+    )
+    prompt_text = load_prompt_text(PATH_RECOMMENDATION_PROMPT_PATH)
+    input_text = "\n\n".join(
+        [
+            f"Threat intel source: {source_name}",
+            f"Target system: {system_name}",
+            f"Detection language: {language}",
+            f"User placement guidance: {user_guidance}",
+            "Matching detections JSON:",
+            json.dumps(scan_result.get("matching_detections", []), indent=2),
+            "Existing detection folders JSON:",
+            json.dumps(knowledge_base["detection_folders"], indent=2),
+            f"Fallback recommended path: {fallback['output_path']}",
+        ]
+    )
+
+    response_data = _request_json_response(
+        api_key=api_key,
+        model=model or DEFAULT_OPENAI_MODEL,
+        prompt_text=prompt_text,
+        input_text=input_text,
+    )
+    recommended_path = _normalize_detection_repo_path(
+        response_data.get("recommended_repo_path", "")
+    )
+    return {
+        "output_path": recommended_path,
+        "reason": str(response_data.get("reason", "")).strip(),
+        "requires_new_folder": not recommended_path.parent.exists(),
+        "file_exists": recommended_path.exists(),
     }
 
 
