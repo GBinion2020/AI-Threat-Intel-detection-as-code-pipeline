@@ -1,0 +1,35 @@
+rule_id: mimicrat_clickfix_powershell_bits_msiexec
+name: MIMICRAT ClickFix PowerShell Downloader and Silent MSI Behavior
+description: 'Detects suspicious PowerShell execution associated with the MIMICRAT ClickFix campaign, focused on staged downloader behavior described by Stormshield. The rule looks for PowerShell-driven download and execution patterns involving Start-BitsTransfer, msiexec silent installation, and common inline execution or bypass-related strings consistent with user-executed ClickFix commands.
+
+  '
+type: query
+language: kuery
+query: "(process.args: \"powershell.exe\" or process.args: \"pwsh.exe\" or process.args: \"cmd.exe\") and\n(\n  (\n    message: \"Start-BitsTransfer\" and\n    (message: \"msiexec\" or message: \"/i\" or message: \"/qn\" or message: \"/quiet\")\n  ) or\n  (\n    (message: \"Invoke-Expression\" or message: \"IEX\") and\n    (message: \"Start-BitsTransfer\" or message: \"msiexec\")\n  ) or\n  (\n    (message: \"AmsiUtils\" or message: \"amsiInitFailed\" or message: \"EventWrite\" or message: \"etw\") and\n    (message: \"Start-BitsTransfer\" or message: \"msiexec\" or message: \"Invoke-Expression\" or message: \"IEX\")\n  )\n)\n"
+index:
+  - .ds-logs-endpoint.events.process-*
+  - .ds-logs-windows.sysmon-*
+  - .ds-logs-system.security-*
+  - .ds-logs-windows.powershell-*
+  - logs-*
+  - .ds-logs*
+severity: high
+risk_score: 75
+enabled: true
+tags:
+  - attack.execution
+  - attack.command_and_control
+  - attack.t1059.001
+  - attack.t1197
+  - attack.t1218
+  - attack.t1218.007
+  - windows
+  - clickfix
+  - mimicrat
+references:
+  - https://www.stormshield.com/news/investigations-into-the-mimicrat-clickfix-campaign/
+author:
+  - gabriel binion
+version: 1.0
+interval: 30m
+from: now-30m
